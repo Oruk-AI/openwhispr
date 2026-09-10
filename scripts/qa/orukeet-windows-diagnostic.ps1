@@ -84,7 +84,7 @@ try {
   Write-Host ($commands | ConvertTo-Json -Depth 4)
   $systemTar = "$env:SystemRoot\System32\tar.exe"
   $gitTar = Join-Path $env:ProgramFiles 'Git\usr\bin\tar.exe'
-  $candidates = @((Get-Command tar -CommandType Application).Source, $systemTar, $gitTar) | Select-Object -Unique
+  $candidates = @(@($commands | ForEach-Object { $_.Source }) + @($systemTar, $gitTar)) | Select-Object -Unique
   $index = 0
   foreach ($candidate in $candidates) {
     if (Test-Path $candidate) {
