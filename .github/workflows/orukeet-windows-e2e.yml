@@ -24,6 +24,8 @@ jobs:
         run: npm ci
       - name: Download the stock sherpa-onnx runtime
         run: npm run download:sherpa-onnx
+      - name: Download the existing Windows native paste helper
+        run: npm run download:windows-fast-paste
       - name: Build the production renderer
         run: npm run build:renderer
       - name: Exercise the actual app, then quit and restart

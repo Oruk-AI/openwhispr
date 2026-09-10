@@ -41,8 +41,11 @@ const opened = [];
 ipcMain.on("dictation-lifecycle-state-changed", (_event, state, inputKind) => {
   events.push({ state, inputKind, at: Date.now() });
 });
-// Observe the real external-link IPC without launching a browser in the runner.
-shell.openExternal = async (url) => opened.push(url);
+// Keep the real renderer/preload/open-external IPC and capture its OS-navigation
+// boundary. Windows routes these HTTPS URLs through explorer.exe, not shell.
+const observeExternalURL = async (url) => opened.push(url);
+shell.openExternal = observeExternalURL;
+require(path.join(root, "src/helpers/externalUrlOpener.js")).openExternalUrl = observeExternalURL;
 const receipt = {
   status: "running",
   phase,
@@ -53,7 +56,7 @@ const receipt = {
   node: process.versions.node,
   harness_sha256: sha(fs.readFileSync(__filename)),
   scope:
-    "Unchanged main.js, built renderer, preload, MediaRecorder and real sherpa-onnx. Isolated profile; fake WAV microphone; UI model download; live preview; real SQLite history and clipboard. No ASR or history mocks. Start/stop/cancel use the renderer's production dictation events. External paste and physical global shortcuts are not exercised.",
+    "Unchanged main.js, built renderer, preload, MediaRecorder and real sherpa-onnx. Isolated profile; fake WAV microphone; UI model download; live preview; real SQLite history and clipboard. No ASR or history mocks. Start/stop/cancel use the renderer's production dictation events. A separate native paste probe delivers the actual recorded transcript to a scratch textarea through the existing Windows helper. Physical global shortcuts are not exercised.",
   checks: [],
 };
 const save = () => fs.writeFileSync(output, `${JSON.stringify(receipt, null, 2)}\n`);
@@ -247,6 +250,11 @@ require(path.join(root, "main.js"));
       `window.__cardBubbles=0;document.addEventListener('click',()=>window.__cardBubbles++);document.querySelector('a[href="https://huggingface.co/oruk/orukeet"]').click()`
     );
     await until(() => opened.length === 1, "model card mouse navigation");
+    progress("model-card-mouse-passed");
+    panel.show();
+    panel.focus();
+    panel.webContents.focus();
+    await until(() => panel.isFocused(), "model card window focus", 10000);
     await panel.webContents.executeJavaScript(
       `document.querySelector('a[href="https://huggingface.co/oruk/orukeet"]').focus()`
     );
@@ -257,7 +265,8 @@ require(path.join(root, "main.js"));
     );
     panel.webContents.sendInputEvent({ type: "keyDown", keyCode: "Return" });
     panel.webContents.sendInputEvent({ type: "keyUp", keyCode: "Return" });
-    await until(() => opened.length === 2, "model card keyboard navigation");
+    await until(() => opened.length === 2, "model card keyboard navigation", 10000);
+    progress("model-card-keyboard-passed");
     assert.equal(await panel.webContents.executeJavaScript("window.__cardBubbles"), 0);
     assert.deepEqual(await panel.webContents.executeJavaScript(stateJS), receipt.selection);
     assert.deepEqual(opened, [
@@ -401,6 +410,24 @@ require(path.join(root, "main.js"));
       receipt.recordings.push(await record("after-cancel"));
       receipt.checks.push(
         "Cancel creates no history row; the next recording restores visible preview, ASR, history and clipboard delivery"
+      );
+    }
+    if (phase === "restart") {
+      progress("native-paste-probe");
+      receipt.native_paste = await require("./orukeet-windows-native-paste.cjs")({
+        electron: requireApp("electron"),
+        appRoot: root,
+        managedWindow: initial,
+        transcript: rows().at(-1).text,
+        focusDrift: true,
+      });
+      assert.equal(
+        receipt.native_paste.status,
+        "passed",
+        receipt.native_paste.error || receipt.native_paste.reason
+      );
+      receipt.checks.push(
+        "The Windows native helper restores a captured scratch target after focus drift, pastes the actual decoded transcript with trusted DOM events, and restores the clipboard"
       );
     }
     receipt.final_history = rows().map(summary);
