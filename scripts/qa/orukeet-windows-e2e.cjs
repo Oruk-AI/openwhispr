@@ -332,16 +332,25 @@ require(path.join(root, "main.js"));
           visible = await initial.webContents.executeJavaScript(
             `(()=>{const p=document.querySelector('main[aria-label="Preview"][aria-hidden="false"] p');return p?.innerText.trim()||''})()`
           );
-          return Boolean(visible);
+          const received = await initial.webContents.executeJavaScript(
+            `window.__orukeetQA.previews.slice(${previewIndex})`
+          );
+          const normalize = (text) => text.trim().toLowerCase().replace(/\s+/g, " ");
+          return (
+            Boolean(visible) &&
+            received.some((event) =>
+              normalize(visible).includes(normalize(event.text).slice(0, 20))
+            )
+          );
         },
         "visible live transcript DOM before stop",
         10000
       );
+      await delay(Math.max(0, 11500 - (Date.now() - started)));
       const live = await initial.webContents.executeJavaScript(
         `window.__orukeetQA.previews.slice(${previewIndex})`
       );
       assert(live.some((event) => event.text.trim().length > 0));
-      await delay(Math.max(0, 11500 - (Date.now() - started)));
       const stopped = Date.now();
       initial.webContents.send("stop-dictation");
       await until(() => rows().length === before + 1, "real transcript saved to SQLite");
