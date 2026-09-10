@@ -311,7 +311,7 @@ require(path.join(root, "main.js"));
     await loaded;
     await delay(2000);
     await initial.webContents.executeJavaScript(
-      `window.__orukeetQA={previews:[]};for(const method of ['onPreviewText','onPreviewAppend'])window.electronAPI[method](text=>{if(typeof text==='string'&&text.trim())window.__orukeetQA.previews.push({type:method,text,at:Date.now()})});`
+      `window.__orukeetQA={previews:[]};for(const method of ['onPreviewText','onPreviewAppend'])window.electronAPI[method](text=>{if(typeof text==='string'&&text.trim())window.__orukeetQA.previews.push({type:method,text,at:Date.now()})});void 0;`
     );
     async function record(label) {
       progress(`recording-${label}`);
