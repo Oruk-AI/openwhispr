@@ -11,7 +11,7 @@ const audio = path.join(profile, "jfk.wav");
 const modelCache = path.join(root, "qa-model-cache");
 const profileModel = path.join(profile, "cache", "parakeet-models", "orukeet-v0.1.0-q8");
 const sha = (value) => crypto.createHash("sha256").update(value).digest("hex");
-const expectedSource = "d662b3649dc553a99b1b272df0432ac20d1219d2";
+const expectedSource = "2516b0c03816fc8cd216becd3ccad249d3c63a7d";
 const receipt = {
   status: "running",
   checked_at_utc: new Date().toISOString(),
@@ -191,7 +191,7 @@ async function runPhase(phase) {
         (file) =>
           file.startsWith("scripts/qa/") || file === ".github/workflows/orukeet-windows-e2e.yml"
       ),
-      "Production source must remain exactly d662b364"
+      "Production source must remain exactly 2516b0c0"
     );
     const fixtureURL =
       "https://raw.githubusercontent.com/Oruk-AI/orukeet/76ffba87962954b06d18f000c9609e336422fb20/demos/fixtures/jfk.wav";
