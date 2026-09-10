@@ -20,8 +20,7 @@ jobs:
       - name: Install app dependencies
         run: npm ci
       - name: Diagnose and install the stock sherpa runtime
-        shell: pwsh
-        run: ./scripts/qa/orukeet-windows-diagnostic.ps1
+        run: node scripts/qa/orukeet-windows-diagnostic.cjs
       - name: Fetch the public speech fixture
         shell: pwsh
         run: curl.exe --fail --location --retry 3 https://raw.githubusercontent.com/Oruk-AI/orukeet/main/demos/fixtures/jfk.wav --output jfk.wav
