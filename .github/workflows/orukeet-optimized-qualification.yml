@@ -1,0 +1,48 @@
+name: Orukeet optimized graph qualification
+
+on:
+  push:
+    branches: [codex/orukeet-sherpa-optimized-qa-20260910]
+
+permissions:
+  contents: read
+
+jobs:
+  compare-graphs:
+    if: github.repository == 'Oruk-AI/openwhispr'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            arch: x64
+          - os: windows-2022
+            arch: x64
+          - os: macos-15
+            arch: arm64
+          - os: macos-15-intel
+            arch: x64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Install unchanged app dependencies
+        run: npm ci
+      - name: Download the stock sherpa-onnx runtime
+        run: npm run download:sherpa-onnx
+      - name: Compare public artifacts through the production manager (Linux)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a npx electron scripts/qa/orukeet-optimized-compare.cjs --no-sandbox --expected-arch ${{ matrix.arch }}
+      - name: Compare public artifacts through the production manager (macOS and Windows)
+        if: runner.os != 'Linux'
+        run: npx electron scripts/qa/orukeet-optimized-compare.cjs --expected-arch ${{ matrix.arch }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: orukeet-optimized-${{ matrix.os }}-${{ matrix.arch }}
+          path: qa-artifacts/
+          if-no-files-found: warn
