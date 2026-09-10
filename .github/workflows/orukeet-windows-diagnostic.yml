@@ -1,0 +1,37 @@
+name: Orukeet Windows sherpa qualification
+
+on:
+  push:
+    branches: [codex/orukeet-sherpa-windows-20260910]
+
+permissions:
+  contents: read
+
+jobs:
+  windows-sherpa:
+    runs-on: windows-2022
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Install app dependencies
+        run: npm ci
+      - name: Diagnose and install the stock sherpa runtime
+        shell: pwsh
+        run: ./scripts/qa/orukeet-windows-diagnostic.ps1
+      - name: Fetch the public speech fixture
+        shell: pwsh
+        run: curl.exe --fail --location --retry 3 https://raw.githubusercontent.com/Oruk-AI/orukeet/main/demos/fixtures/jfk.wav --output jfk.wav
+      - name: Exercise the production model manager on Windows
+        run: npx electron scripts/qa/orukeet-onnx-smoke.cjs --audio jfk.wav --output orukeet-onnx-result.json --model orukeet-v0.1.0-q8
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: orukeet-windows-diagnostic
+          path: |
+            orukeet-onnx-result.json
+            windows-diagnostic/
+          if-no-files-found: warn
