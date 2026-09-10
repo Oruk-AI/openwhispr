@@ -311,7 +311,7 @@ require(path.join(root, "main.js"));
     await loaded;
     await delay(2000);
     await initial.webContents.executeJavaScript(
-      `window.__orukeetQA={previews:[]};for(const method of ['onPreviewText','onPreviewAppend'])window.electronAPI[method](text=>{if(typeof text==='string'&&text.trim())window.__orukeetQA.previews.push({type:method,text,at:Date.now()})});void 0;`
+      `window.__orukeetQA={previews:[],finals:[]};for(const method of ['onPreviewText','onPreviewAppend'])window.electronAPI[method](text=>{if(typeof text==='string'&&text.trim())window.__orukeetQA.previews.push({type:method,text,at:Date.now()})});window.electronAPI.onPreviewResult(payload=>{if(payload?.text)window.__orukeetQA.finals.push({text:payload.text,at:Date.now()})});void 0;`
     );
     async function record(label) {
       progress(`recording-${label}`);
@@ -319,6 +319,9 @@ require(path.join(root, "main.js"));
       const before = rows().length;
       const previewIndex = await initial.webContents.executeJavaScript(
         "window.__orukeetQA.previews.length"
+      );
+      const finalIndex = await initial.webContents.executeJavaScript(
+        "window.__orukeetQA.finals.length"
       );
       clipboard.writeText(`orukeet-e2e-${phase}-${label}-pending`);
       initial.webContents.send("start-dictation");
@@ -372,9 +375,30 @@ require(path.join(root, "main.js"));
         15000
       );
       await until(
+        () =>
+          initial.webContents.executeJavaScript(
+            `window.__orukeetQA.finals.slice(${finalIndex}).some(event=>event.text===${JSON.stringify(row.text)})`
+          ),
+        "final preview IPC matches this saved transcript",
+        10000
+      );
+      await until(
+        () =>
+          initial.webContents.executeJavaScript(
+            `document.querySelector('main[aria-label="Preview"][aria-hidden="false"] p')?.innerText.trim()===${JSON.stringify(row.text.trim())}`
+          ),
+        "visible final preview matches this saved transcript",
+        10000
+      );
+      await until(
         () => events.slice(eventIndex).some((event) => event.state === "idle"),
         "recording returns idle"
       );
+      const backend = await initial.webContents.executeJavaScript(
+        "window.electronAPI.parakeetServerStatus()"
+      );
+      assert.equal(backend.running, true);
+      assert.equal(backend.modelName, "orukeet-v0.1.0-q8");
       return {
         label,
         ...summary(row),
@@ -385,6 +409,8 @@ require(path.join(root, "main.js"));
         visible_live_preview_characters: visible.length,
         visible_live_preview_sha256: sha(visible),
         clipboard_matches_saved_text: true,
+        final_preview_matches_saved_text: true,
+        active_backend_model: backend.modelName,
       };
     }
     receipt.recordings = [await record(phase === "fresh" ? "first" : "after-restart")];
