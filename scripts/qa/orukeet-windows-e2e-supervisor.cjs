@@ -9,7 +9,7 @@ const output = path.join(root, "qa-artifacts");
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), "openwhispr-windows-e2e-"));
 const audio = path.join(profile, "jfk.wav");
 const sha = (value) => crypto.createHash("sha256").update(value).digest("hex");
-const expectedSource = "f2d1fa16eda2ba54992941bb7a5a8aa137a826dc";
+const expectedSource = "d662b3649dc553a99b1b272df0432ac20d1219d2";
 const receipt = {
   status: "running",
   checked_at_utc: new Date().toISOString(),
@@ -185,7 +185,7 @@ async function runPhase(phase) {
         (file) =>
           file.startsWith("scripts/qa/") || file === ".github/workflows/orukeet-windows-e2e.yml"
       ),
-      "Production source must remain exactly f2d1fa16"
+      "Production source must remain exactly d662b364"
     );
     const fixtureURL =
       "https://raw.githubusercontent.com/Oruk-AI/orukeet/76ffba87962954b06d18f000c9609e336422fb20/demos/fixtures/jfk.wav";
