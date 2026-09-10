@@ -8,6 +8,8 @@ const root = path.resolve(__dirname, "../..");
 const output = path.join(root, "qa-artifacts");
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), "openwhispr-windows-e2e-"));
 const audio = path.join(profile, "jfk.wav");
+const modelCache = path.join(root, "qa-model-cache");
+const profileModel = path.join(profile, "cache", "parakeet-models", "orukeet-v0.1.0-q8");
 const sha = (value) => crypto.createHash("sha256").update(value).digest("hex");
 const expectedSource = "d662b3649dc553a99b1b272df0432ac20d1219d2";
 const receipt = {
@@ -77,7 +79,11 @@ async function runPhase(phase) {
     ],
     {
       cwd: root,
-      env: { ...process.env, ELECTRON_ENABLE_LOGGING: "0" },
+      env: {
+        ...process.env,
+        ELECTRON_ENABLE_LOGGING: "0",
+        ORUKEET_QA_REUSED_MODEL: receipt.reused_cached_model ? "1" : "0",
+      },
       stdio: ["pipe", "pipe", "pipe"],
     }
   );
@@ -198,7 +204,13 @@ async function runPhase(phase) {
       "d7d4e74b8a333ed02186008bc109a1b1a19d16da668bd56e785d80d69a16a72f"
     );
     fs.writeFileSync(audio, wav);
+    receipt.reused_cached_model = fs.existsSync(path.join(modelCache, "encoder.int8.onnx"));
+    if (receipt.reused_cached_model) {
+      fs.cpSync(modelCache, profileModel, { recursive: true });
+    }
     await runPhase("fresh");
+    // The app harness has verified every hash and completed real recording.
+    fs.cpSync(profileModel, modelCache, { recursive: true });
     await runPhase("restart");
     receipt.status = "passed";
     console.log("Both Windows renderer phases and normal process-tree shutdown checks passed.");

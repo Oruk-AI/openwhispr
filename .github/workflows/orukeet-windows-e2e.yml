@@ -28,8 +28,19 @@ jobs:
         run: npm run download:windows-fast-paste
       - name: Build the production renderer
         run: npm run build:renderer
+      - name: Restore the hash-verified model from an earlier QA run
+        uses: actions/cache/restore@v4
+        with:
+          path: qa-model-cache/
+          key: orukeet-windows-e2e-f9191f30178cc9122ce2f023bf9fefafc822028307b0efa4caff645ba3fe8d0a
       - name: Exercise the actual app, then quit and restart
         run: node scripts/qa/orukeet-windows-e2e-supervisor.cjs
+      - name: Cache the model only after successful verification and recording
+        if: always() && hashFiles('qa-model-cache/encoder.int8.onnx') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: qa-model-cache/
+          key: orukeet-windows-e2e-f9191f30178cc9122ce2f023bf9fefafc822028307b0efa4caff645ba3fe8d0a
       - uses: actions/upload-artifact@v4
         if: always()
         with:

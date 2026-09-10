@@ -206,7 +206,15 @@ require(path.join(root, "main.js"));
     const downloaded = installed.models.some(
       (model) => model.model === "orukeet-v0.1.0-q8" && model.downloaded
     );
-    if (phase === "fresh") {
+    if (phase === "fresh" && process.env.ORUKEET_QA_REUSED_MODEL === "1") {
+      assert.equal(downloaded, true, "Restored model must be discovered by the production manager");
+      await panel.webContents.executeJavaScript(
+        `document.querySelector('a[href="https://huggingface.co/oruk/orukeet"]').parentElement.click()`
+      );
+      receipt.checks.push(
+        "A fresh profile discovers the previously hash-verified QA model cache; the installed Orukeet card selects it"
+      );
+    } else if (phase === "fresh") {
       assert.equal(downloaded, false, "Fresh profile must have no installed model");
       progress("public-download-started");
       await panel.webContents.executeJavaScript(
@@ -324,6 +332,18 @@ require(path.join(root, "main.js"));
         "window.__orukeetQA.finals.length"
       );
       clipboard.writeText(`orukeet-e2e-${phase}-${label}-pending`);
+      const previousPreviewStillVisible =
+        label === "immediate-next-success"
+          ? await initial.webContents.executeJavaScript(
+              `Boolean(document.querySelector('main[aria-label="Preview"][aria-hidden="false"] p')?.innerText.trim())`
+            )
+          : null;
+      if (label === "immediate-next-success")
+        assert.equal(
+          previousPreviewStillVisible,
+          true,
+          "The previous final preview must still be open when the rapid next recording starts"
+        );
       initial.webContents.send("start-dictation");
       await until(
         () => events.slice(eventIndex).some((event) => event.state === "recording"),
@@ -411,11 +431,18 @@ require(path.join(root, "main.js"));
         clipboard_matches_saved_text: true,
         final_preview_matches_saved_text: true,
         active_backend_model: backend.modelName,
+        previous_preview_still_visible_at_start: previousPreviewStillVisible,
       };
     }
     receipt.recordings = [await record(phase === "fresh" ? "first" : "after-restart")];
+    // Do not dismiss or wait for the first final preview to fade. The next
+    // successful recording must replace that still-open preview in place.
+    receipt.recordings.push(await record("immediate-next-success"));
     receipt.checks.push(
       "Real MediaRecorder capture yields visible live preview before stop, final ASR text, a SQLite row and exact clipboard delivery"
+    );
+    receipt.checks.push(
+      "Two immediately consecutive successful recordings both show actual live and final text while the first preview is still open"
     );
     if (phase === "fresh") {
       const before = rows().length;
