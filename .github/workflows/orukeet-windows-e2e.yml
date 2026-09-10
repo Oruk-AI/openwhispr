@@ -1,0 +1,36 @@
+name: Orukeet Windows renderer end-to-end
+
+on:
+  push:
+    branches: [codex/orukeet-windows-e2e-20260910]
+
+permissions:
+  contents: read
+
+jobs:
+  windows-renderer:
+    if: github.repository == 'Oruk-AI/openwhispr'
+    runs-on: windows-2022
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Install unchanged application dependencies
+        run: npm ci
+      - name: Download the stock sherpa-onnx runtime
+        run: npm run download:sherpa-onnx
+      - name: Build the production renderer
+        run: npm run build:renderer
+      - name: Exercise the actual app, then quit and restart
+        run: node scripts/qa/orukeet-windows-e2e-supervisor.cjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: orukeet-windows-renderer-e2e
+          path: qa-artifacts/
+          if-no-files-found: warn
