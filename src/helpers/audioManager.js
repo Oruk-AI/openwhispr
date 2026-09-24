@@ -3362,6 +3362,12 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
     const streamingFallbackReason =
       metadata.streamingFallbackReason ?? this.consumeStreamingFallbackReason(settings);
     if (streamingFallbackReason) opts.streamingFallbackReason = streamingFallbackReason;
+    // Orukeet's audio estimate rides along for the backend's per-user gate
+    // only. It is never the declared `language`: /api/transcribe picks models
+    // by declared language, and the fallback must be the request the user
+    // would make without Orukeet.
+    const detectedLanguageFields = metadata.detectedLanguageFields || {};
+    Object.assign(opts, detectedLanguageFields);
     if (analyticsSyncEnabled(settings)) {
       opts.analyticsOccurredAt = analyticsOccurredAt.toISOString();
       opts.localDate = localDateKey(analyticsOccurredAt);
@@ -3440,6 +3446,7 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
               language: this.getCleanupLanguage(settings),
               locale: settings.uiLanguage || "en",
               streamingFallbackReason,
+              ...detectedLanguageFields,
               sttProvider: result.sttProvider,
               sttModel: result.sttModel,
               sttProcessingMs: result.sttProcessingMs,
@@ -3484,6 +3491,7 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
                     mode: "cloudReason",
                     meta: {
                       streamingFallbackReason,
+                      ...detectedLanguageFields,
                       sttProvider: result.sttProvider,
                       sttModel: result.sttModel,
                       sttProcessingMs: result.sttProcessingMs,
