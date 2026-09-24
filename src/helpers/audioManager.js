@@ -3376,7 +3376,12 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
     }
     const cleanupCloudMode = settings.cleanupCloudMode || "openwhispr";
     // Only cloud cleanup writes a combined STT log; translation alone does not.
-    if (settings.useCleanupModel && cleanupCloudMode === "openwhispr") {
+    // A voice assistant recording never runs cleanup, so this upload is its log.
+    if (
+      settings.useCleanupModel &&
+      cleanupCloudMode === "openwhispr" &&
+      !this.voiceAgentRequested
+    ) {
       opts.sendLogs = "false";
     }
 
@@ -5280,18 +5285,11 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
       isOrukeetStream &&
       fallbackBlob?.size > 0 &&
       resolveStreamingFallbackTarget(stSettings) === "cloud" &&
-      shouldRetranscribeOrukeetLanguage({
-        language: this.getEffectiveSttLanguage(stSettings),
-        final: orukeetFinal,
-      })
+      shouldRetranscribeOrukeetLanguage({ language: streamingSttLanguage, final: orukeetFinal })
     ) {
       logger.info(
         "Orukeet detected an unsupported language, re-transcribing through Cloud",
-        {
-          language: orukeetFinal.language,
-          confidence: orukeetFinal.languageConfidence,
-          audioSeconds: orukeetFinal.languageAudioSeconds,
-        },
+        detectedLanguageFields,
         "streaming"
       );
       try {
@@ -5311,17 +5309,42 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
           usedBatchFallback = true;
           batchFallbackResult = batchResult;
           batchWarning = batchResult.warning || null;
+        } else {
+          logger.warn(
+            "Language re-transcription returned no text, keeping the Orukeet transcript",
+            {},
+            "streaming"
+          );
         }
       } catch (languageFallbackErr) {
         if (wasCancelled()) return true;
         if (languageFallbackErr.selectionEditFatal) {
           return this._failStreamingSelectionEdit(languageFallbackErr);
         }
-        logger.error(
-          "Language re-transcription failed, keeping the Orukeet transcript",
-          { error: languageFallbackErr.message },
-          "streaming"
-        );
+        if (
+          languageFallbackErr.code === "NO_SPEECH_DETECTED" ||
+          languageFallbackErr.code === DICTIONARY_ECHO_CODE
+        ) {
+          // Cloud heard no speech, so Orukeet's text is the nonsense this path
+          // exists to catch, and an echo was already metered. End empty and keep
+          // the recording for a retry, as the batch pipeline does (#1547).
+          logger.warn(
+            "Language re-transcription found no speech, discarding the Orukeet transcript",
+            { code: languageFallbackErr.code },
+            "streaming"
+          );
+          finalText = "";
+          this.saveFailedTranscription(languageFallbackErr.message, languageFallbackErr.code, {
+            durationSeconds,
+            analyticsOccurredAt: analyticsOccurredAt.toISOString(),
+          });
+        } else {
+          logger.error(
+            "Language re-transcription failed, keeping the Orukeet transcript",
+            { error: languageFallbackErr.message },
+            "streaming"
+          );
+        }
       }
     }
 
@@ -5547,6 +5570,14 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
         analyticsOccurredAt: resultAnalyticsOccurredAt,
         ...this._takePendingResultExtras(),
         ...(batchWarning ? { warning: batchWarning } : {}),
+        // The upgrade prompt opens from the batch upload's usage.
+        ...(batchFallbackResult?.limitReached
+          ? {
+              limitReached: true,
+              wordsUsed: batchFallbackResult.wordsUsed,
+              wordsRemaining: batchFallbackResult.wordsRemaining,
+            }
+          : {}),
       });
 
       if (!usedBatchFallback) {
