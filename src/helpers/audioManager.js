@@ -1,5 +1,6 @@
 import ReasoningService from "../services/ReasoningService";
 import logger from "../utils/logger";
+import { assertValidCleanupOutput } from "../utils/cleanupOutput";
 import { isAzureOpenAIEndpoint } from "../utils/urlUtils";
 import { withSessionRefresh } from "../lib/auth";
 import { getBaseLanguageCode, getLanguageLabel } from "../utils/languageSupport";
@@ -117,7 +118,11 @@ import {
   payloadSendsDictionaryBias,
 } from "../utils/dictionaryEchoFilter.js";
 import { dictionaryPromptLimit, trimDictionaryPrompt } from "../utils/dictionaryPromptCap.js";
-import { dictionaryKeywords, usesTranscriptionKeywords } from "../utils/dictionaryKeywords.js";
+import {
+  dictionaryKeywordOverflow,
+  dictionaryKeywords,
+  usesTranscriptionKeywords,
+} from "../utils/dictionaryKeywords.js";
 import { getDictionaryHintWords } from "../utils/snippets";
 import { normalizeAgentSelectionContext } from "../utils/agentSelectionContext";
 import { getAgentName } from "../utils/agentName";
@@ -2704,7 +2709,7 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
   // and previews stay truthful.
   _bankAssistantDirective(transcript, config, options = {}) {
     if (!this.isProcessing) return;
-    const { selectedContext, deliverySessionId } = options || {};
+    const { selectedContext, deliverySessionId, deliveryAcceptsMarkdown } = options || {};
     this.pendingAssistantConversation = {
       transcript,
       // resolveReasoningRoute mirrors an attached screenContext into
@@ -2713,7 +2718,7 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
       // (the panel re-decides for its own request).
       screenContext: config?.rawScreenContext ?? null,
       ...(selectedContext ? { selectedContext } : {}),
-      ...(deliverySessionId ? { deliverySessionId } : {}),
+      ...(deliverySessionId ? { deliverySessionId, deliveryAcceptsMarkdown } : {}),
     };
   }
 
@@ -2739,7 +2744,7 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
     text,
     agentName,
     config,
-    { selectedContext, selectedText, deliverySessionId } = {}
+    { selectedContext, selectedText, deliverySessionId, deliveryAcceptsMarkdown } = {}
   ) {
     this.assertAgentAllowedByPolicy();
     const settings = getSettings();
@@ -2752,7 +2757,11 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
           config?.snippets ?? settings.snippets
         );
     const transcript = selectedText === undefined ? command : `${command}\n\n"${selectedText}"`;
-    this._bankAssistantDirective(transcript, config, { selectedContext, deliverySessionId });
+    this._bankAssistantDirective(transcript, config, {
+      selectedContext,
+      deliverySessionId,
+      deliveryAcceptsMarkdown,
+    });
     return text;
   }
 
@@ -2789,6 +2798,7 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
       captureDisposition === "caret" && getSettings().autoPasteEnabled
         ? capture.sessionId
         : undefined;
+    const deliveryAcceptsMarkdown = capture?.acceptsMarkdown === true;
 
     if (!config?.selectionEditReachable) {
       // No in-place editor: the panel never types, so only a readable
@@ -2799,6 +2809,7 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
             ? capture.text
             : undefined,
         deliverySessionId,
+        deliveryAcceptsMarkdown,
       });
     }
 
@@ -2816,7 +2827,10 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
     }
 
     if (captureDisposition === "standalone" || captureDisposition === "caret") {
-      return this._bankPanelAgentCommand(text, agentName, config, { deliverySessionId });
+      return this._bankPanelAgentCommand(text, agentName, config, {
+        deliverySessionId,
+        deliveryAcceptsMarkdown,
+      });
     }
 
     if (capture?.status !== "selected") {
@@ -2956,13 +2970,14 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
   async runTranslationChain({ text, settings, agentName, route, cleanup }) {
     const runCleanup = async (currentText) => {
       if (cleanup.mode === "cloudReason") {
+        const customPrompt = this.getCustomPrompt();
         const reasonResult = await withSessionRefresh(async () => {
           const res = await window.electronAPI.cloudReason(currentText, {
             agentName,
             promptMode: "cleanup",
             purpose: "cleanup",
             customDictionary: getDictionaryHintWords(settings),
-            customPrompt: this.getCustomPrompt(),
+            customPrompt,
             language: this.getCleanupLanguage(settings),
             locale: settings.uiLanguage || "en",
             ...(cleanup.meta || {}),
@@ -2974,6 +2989,9 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
           }
           return res;
         });
+        if (!customPrompt && hasTextContent(reasonResult.text)) {
+          assertValidCleanupOutput(currentText, reasonResult.text);
+        }
         return reasonResult.success && reasonResult.text ? reasonResult.text : null;
       }
       const cleanupModel = cleanup.model;
@@ -3439,13 +3457,14 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
           );
           if (hasTextContent(reasoned)) processedText = reasoned;
         } else if (route.kind === "cleanup" && cleanupCloudMode === "openwhispr") {
+          const customPrompt = this.getCustomPrompt();
           const reasonResult = await withSessionRefresh(async () => {
             const res = await window.electronAPI.cloudReason(processedText, {
               agentName,
               promptMode: "cleanup",
               purpose: "cleanup",
               customDictionary: getDictionaryHintWords(settings),
-              customPrompt: this.getCustomPrompt(),
+              customPrompt,
               language: this.getCleanupLanguage(settings),
               locale: settings.uiLanguage || "en",
               streamingFallbackReason,
@@ -3468,6 +3487,7 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
 
           // Cloud cleanup can return success with empty text; keep the raw transcription instead of wiping it.
           if (reasonResult.success && hasTextContent(reasonResult.text)) {
+            if (!customPrompt) assertValidCleanupOutput(processedText, reasonResult.text);
             processedText = reasonResult.text;
           }
         } else if (route.kind === "cleanup") {
@@ -3710,7 +3730,8 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
       const endpoint = this.getTranscriptionEndpoint(route);
 
       // gpt-transcribe takes the dictionary on its own keywords[] channel (see
-      // dictionaryKeywords), so its prompt carries only the Chinese script bias.
+      // dictionaryKeywords), so its prompt carries only the Chinese script bias and
+      // the terms past the keyword cap.
       const usesKeywords = usesTranscriptionKeywords(model);
       const dictionary = this.getCustomDictionaryPrompt();
 
@@ -3721,7 +3742,10 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
       // Whisper decoders read the tail of whatever they are given.
       const MAX_PROMPT_CHARS = dictionaryPromptLimit({ provider, endpoint, model });
       const trimmedPrompt = trimDictionaryPrompt(
-        this.getWhisperPrompt(apiSettings, usesKeywords ? null : dictionary),
+        this.getWhisperPrompt(
+          apiSettings,
+          usesKeywords ? dictionaryKeywordOverflow(dictionary) : dictionary
+        ),
         MAX_PROMPT_CHARS
       );
       const dictionaryPrompt = trimmedPrompt.prompt;
@@ -5322,13 +5346,14 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
             "streaming"
           );
         } else if (route.kind === "cleanup" && cleanupCloudMode === "openwhispr") {
+          const customPrompt = this.getCustomPrompt();
           const reasonResult = await withSessionRefresh(async () => {
             const res = await window.electronAPI.cloudReason(finalText, {
               agentName,
               promptMode: "cleanup",
               purpose: "cleanup",
               customDictionary: getDictionaryHintWords(stSettings),
-              customPrompt: this.getCustomPrompt(),
+              customPrompt,
               language: this.getCleanupLanguage(stSettings),
               locale: stSettings.uiLanguage || "en",
               sttProvider: this.getStreamingProviderName(),
@@ -5348,10 +5373,11 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
             return res;
           });
 
+          usedCloudReasoning = true;
           if (reasonResult.success && hasTextContent(reasonResult.text)) {
+            if (!customPrompt) assertValidCleanupOutput(finalText, reasonResult.text);
             finalText = reasonResult.text;
           }
-          usedCloudReasoning = true;
 
           logger.info(
             "Streaming reasoning complete",
